@@ -1,41 +1,39 @@
 package pl.sepiqon.rodzinka.views.rodzina;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Optional;
-import java.util.UUID;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
-
-import pl.sepiqon.rodzinka.data.entity.SamplePerson;
-import pl.sepiqon.rodzinka.data.service.SamplePersonService;
-
-import com.vaadin.collaborationengine.CollaborationAvatarGroup;
-import com.vaadin.collaborationengine.CollaborationBinder;
-import com.vaadin.collaborationengine.UserInfo;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.HasStyle;
 import com.vaadin.flow.component.UI;
-import com.vaadin.flow.component.button.Button;
-import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.checkbox.Checkbox;
-import com.vaadin.flow.component.datepicker.DatePicker;
 import com.vaadin.flow.component.formlayout.FormLayout;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.notification.Notification;
-import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.splitlayout.SplitLayout;
-import com.vaadin.flow.component.textfield.TextField;
-import com.vaadin.flow.data.binder.ValidationException;
-import com.vaadin.flow.data.renderer.TemplateRenderer;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.spring.data.VaadinSpringDataHelpers;
-import pl.sepiqon.rodzinka.views.MainLayout;
 import com.vaadin.flow.router.RouteAlias;
+import com.vaadin.flow.spring.data.VaadinSpringDataHelpers;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+
+import elemental.json.JsonObject;
+import pl.sepiqon.rodzinka.data.entity.Czlonek;
+import pl.sepiqon.rodzinka.data.service.CzlonekService;
+import pl.sepiqon.rodzinka.views.MainLayout;
 
 @Route(value = "main/:samplePersonID?/:action?(edit)", layout = MainLayout.class)
 @RouteAlias(value = "", layout = MainLayout.class)
@@ -45,30 +43,37 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
     private final String SAMPLEPERSON_ID = "samplePersonID";
     private final String SAMPLEPERSON_EDIT_ROUTE_TEMPLATE = "main/%d/edit";
 
-    private Grid<SamplePerson> grid = new Grid<>(SamplePerson.class, false);
+    private Grid<Czlonek> grid = new Grid<>(Czlonek.class, false);
 
-    CollaborationAvatarGroup avatarGroup;
+    private CzlonekService czlonekService;
 
-    private TextField firstName;
-    private TextField lastName;
-    private TextField email;
-    private TextField phone;
-    private DatePicker dateOfBirth;
-    private TextField occupation;
-    private Checkbox important;
-
-    private Button cancel = new Button("Cancel");
-    private Button save = new Button("Save");
-
-    private CollaborationBinder<SamplePerson> binder;
-
-    private SamplePerson samplePerson;
-
-    private SamplePersonService samplePersonService;
-
-    public RodzinaView(@Autowired SamplePersonService samplePersonService) {
-        this.samplePersonService = samplePersonService;
+    public RodzinaView(@Autowired CzlonekService czlonekService) {
+        this.czlonekService = czlonekService;
         addClassNames("rodzina-view", "flex", "flex-col", "h-full");
+        Czlonek czlonek = new Czlonek();
+        czlonek.setAge(12.0);
+        czlonek.setLastName("Kowalski");
+        czlonek.setName("Mateusz");
+        czlonek.setRola_W_Rodzinie("JA");
+        this.czlonekService.save(czlonek);
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root;
+        try {
+            root = mapper.readTree(getHTML("http://localhost:8088/program"));
+            this.czlonekService.clear();
+            for (JsonNode jsonNode : root.with("rodzina").withArray("czlonkowie")) {
+
+                Czlonek c = mapper.readValue(jsonNode.toString(), Czlonek.class);
+                this.czlonekService.save(c);
+            }
+        } catch (JsonMappingException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (JsonProcessingException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
 
         // UserInfo is used by Collaboration Engine and is used to share details
         // of users to each other to able collaboration. Replace this with
@@ -76,14 +81,10 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
         // identifier, and the user's real name. You can also provide the users
         // avatar by passing an url to the image as a third parameter, or by
         // configuring an `ImageProvider` to `avatarGroup`.
-        UserInfo userInfo = new UserInfo(UUID.randomUUID().toString(), "Steve Lange");
 
         // Create UI
         SplitLayout splitLayout = new SplitLayout();
         splitLayout.setSizeFull();
-
-        avatarGroup = new CollaborationAvatarGroup(userInfo, null);
-        avatarGroup.getStyle().set("visibility", "hidden");
 
         createGridLayout(splitLayout);
         createEditorLayout(splitLayout);
@@ -91,18 +92,12 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
         add(splitLayout);
 
         // Configure Grid
-        grid.addColumn("firstName").setAutoWidth(true);
+        grid.addColumn("name").setAutoWidth(true);
         grid.addColumn("lastName").setAutoWidth(true);
-        grid.addColumn("email").setAutoWidth(true);
-        grid.addColumn("phone").setAutoWidth(true);
-        grid.addColumn("dateOfBirth").setAutoWidth(true);
-        grid.addColumn("occupation").setAutoWidth(true);
-        TemplateRenderer<SamplePerson> importantRenderer = TemplateRenderer.<SamplePerson>of(
-                "<iron-icon hidden='[[!item.important]]' icon='vaadin:check' style='width: var(--lumo-icon-size-s); height: var(--lumo-icon-size-s); color: var(--lumo-primary-text-color);'></iron-icon><iron-icon hidden='[[item.important]]' icon='vaadin:minus' style='width: var(--lumo-icon-size-s); height: var(--lumo-icon-size-s); color: var(--lumo-disabled-text-color);'></iron-icon>")
-                .withProperty("important", SamplePerson::isImportant);
-        grid.addColumn(importantRenderer).setHeader("Important").setAutoWidth(true);
+        grid.addColumn("age").setAutoWidth(true);
+        grid.addColumn("rolaWRodzinie").setAutoWidth(true);
 
-        grid.setItems(query -> samplePersonService.list(
+        grid.setItems(query -> czlonekService.list(
                 PageRequest.of(query.getPage(), query.getPageSize(), VaadinSpringDataHelpers.toSpringDataSort(query)))
                 .stream());
         grid.addThemeVariants(GridVariant.LUMO_NO_BORDER);
@@ -113,48 +108,18 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
             if (event.getValue() != null) {
                 UI.getCurrent().navigate(String.format(SAMPLEPERSON_EDIT_ROUTE_TEMPLATE, event.getValue().getId()));
             } else {
-                clearForm();
                 UI.getCurrent().navigate(RodzinaView.class);
             }
         });
 
-        // Configure Form
-        binder = new CollaborationBinder<>(SamplePerson.class, userInfo);
-
-        // Bind fields. This where you'd define e.g. validation rules
-
-        binder.bindInstanceFields(this);
-
-        cancel.addClickListener(e -> {
-            clearForm();
-            refreshGrid();
-        });
-
-        save.addClickListener(e -> {
-            try {
-                if (this.samplePerson == null) {
-                    this.samplePerson = new SamplePerson();
-                }
-                binder.writeBean(this.samplePerson);
-
-                samplePersonService.update(this.samplePerson);
-                clearForm();
-                refreshGrid();
-                Notification.show("SamplePerson details stored.");
-                UI.getCurrent().navigate(RodzinaView.class);
-            } catch (ValidationException validationException) {
-                Notification.show("An exception happened while trying to store the samplePerson details.");
-            }
-        });
     }
 
     @Override
     public void beforeEnter(BeforeEnterEvent event) {
         Optional<Integer> samplePersonId = event.getRouteParameters().getInteger(SAMPLEPERSON_ID);
         if (samplePersonId.isPresent()) {
-            Optional<SamplePerson> samplePersonFromBackend = samplePersonService.get(samplePersonId.get());
+            Optional<Czlonek> samplePersonFromBackend = czlonekService.get(samplePersonId.get());
             if (samplePersonFromBackend.isPresent()) {
-                populateForm(samplePersonFromBackend.get());
             } else {
                 Notification.show(
                         String.format("The requested samplePerson was not found, ID = %d", samplePersonId.get()), 3000,
@@ -177,34 +142,15 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
         editorLayoutDiv.add(editorDiv);
 
         FormLayout formLayout = new FormLayout();
-        firstName = new TextField("First Name");
-        lastName = new TextField("Last Name");
-        email = new TextField("Email");
-        phone = new TextField("Phone");
-        dateOfBirth = new DatePicker("Date Of Birth");
-        occupation = new TextField("Occupation");
-        important = new Checkbox("Important");
-        important.getStyle().set("padding-top", "var(--lumo-space-m)");
-        Component[] fields = new Component[]{firstName, lastName, email, phone, dateOfBirth, occupation, important};
+
+        Component[] fields = new Component[] {};
 
         for (Component field : fields) {
             ((HasStyle) field).addClassName("full-width");
         }
         formLayout.add(fields);
-        editorDiv.add(avatarGroup, formLayout);
-        createButtonLayout(editorLayoutDiv);
 
         splitLayout.addToSecondary(editorLayoutDiv);
-    }
-
-    private void createButtonLayout(Div editorLayoutDiv) {
-        HorizontalLayout buttonLayout = new HorizontalLayout();
-        buttonLayout.setClassName("w-full flex-wrap bg-contrast-5 py-s px-l");
-        buttonLayout.setSpacing(true);
-        cancel.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
-        save.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        buttonLayout.add(save, cancel);
-        editorLayoutDiv.add(buttonLayout);
     }
 
     private void createGridLayout(SplitLayout splitLayout) {
@@ -220,21 +166,23 @@ public class RodzinaView extends Div implements BeforeEnterObserver {
         grid.getLazyDataView().refreshAll();
     }
 
-    private void clearForm() {
-        populateForm(null);
-    }
-
-    private void populateForm(SamplePerson value) {
-        this.samplePerson = value;
-        String topic = null;
-        if (this.samplePerson != null && this.samplePerson.getId() != null) {
-            topic = "samplePerson/" + this.samplePerson.getId();
-            avatarGroup.getStyle().set("visibility", "visible");
-        } else {
-            avatarGroup.getStyle().set("visibility", "hidden");
+    public String getHTML(String urlToRead) {
+        try {
+            StringBuilder result = new StringBuilder();
+            URL url = new URL(urlToRead);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                for (String line; (line = reader.readLine()) != null;) {
+                    result.append(line);
+                }
+            }
+            return result.toString();
+        } catch (Exception e) {
+            System.out.println(e);
         }
-        binder.setTopic(topic, () -> this.samplePerson);
-        avatarGroup.setTopic(topic);
+        return "";
 
     }
+
 }
